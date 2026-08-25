@@ -1,0 +1,17 @@
+[Unit]
+Description=HNS.one oblivious DoH target (RFC 9230) -> local hsd recursive
+After=network.target hns-resolver.service
+Wants=hns-resolver.service
+
+[Service]
+EnvironmentFile=/etc/hns-odoh.env
+ExecStart=/usr/local/bin/hns-odoh
+Restart=always
+RestartSec=3
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

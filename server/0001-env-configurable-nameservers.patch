@@ -1,0 +1,30 @@
+diff --git a/odoh_server.go b/odoh_server.go
+index cbc54af..f7c8426 100644
+--- a/odoh_server.go
++++ b/odoh_server.go
+@@ -29,6 +29,7 @@ import (
+ 	"log"
+ 	"net/http"
+ 	"os"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/cisco/go-hpke"
+@@ -64,8 +65,15 @@ const (
+ )
+ 
+ var (
+-	// DNS constants. Fill in a DNS server to forward to here.
+-	nameServers = []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"}
++	// DNS upstream(s): ODOH_NAMESERVERS env (comma-separated host:port),
++	// else the public defaults. hns.one points this at the local hsd
++	// recursive resolver so oblivious queries resolve Handshake names.
++	nameServers = func() []string {
++		if ns := os.Getenv("ODOH_NAMESERVERS"); ns != "" {
++			return strings.Split(ns, ",")
++		}
++		return []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"}
++	}()
+ )
+ 
+ type odohServer struct {

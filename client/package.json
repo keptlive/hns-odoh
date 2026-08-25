@@ -1,0 +1,13 @@
+{
+  "name": "hns-odoh-client",
+  "version": "1.0.0",
+  "description": "Oblivious DoH (RFC 9230) client for Handshake resolution — talks to odoh.hns.one through independent relays",
+  "type": "module",
+  "main": "odoh.js",
+  "scripts": { "example": "node example.mjs" },
+  "license": "MIT",
+  "dependencies": {
+    "@hpke/core": "^1.9.0",
+    "@hpke/dhkem-x25519": "^1.8.0"
+  }
+}
