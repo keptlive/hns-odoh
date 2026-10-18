@@ -1,0 +1,21 @@
+# Regenerate the signed ODoH feed the browser consumes. Oneshot; driven by
+# hns-odoh-feed.timer. Fetches the DNSCrypt lists, verifies their minisign
+# signatures, and writes the feed atomically -- on any signature/parse failure
+# it exits non-zero and leaves the previous good feed in place (fail closed).
+[Unit]
+Description=Rebuild the signed ODoH resolver/relay feed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust paths to wherever the repo and web root live on your host.
+ExecStart=/usr/bin/python3 /opt/hns-odoh/list-service/odoh-list-service.py \
+    --out /var/www/html/.well-known/odoh-feed.json
+# Read-only except the single output file's directory.
+User=www-data
+Group=www-data
+ReadWritePaths=/var/www/html/.well-known
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
