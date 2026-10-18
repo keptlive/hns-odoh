@@ -1,28 +1,19 @@
-# hns-odoh — Oblivious DoH for Handshake
+# hns-odoh
 
-**The first Oblivious DoH (RFC 9230) deployment for the Handshake root zone.**
-Live at `odoh.hns.one` since 2026-08-17.
+An Oblivious DNS-over-HTTPS ([RFC 9230](https://www.rfc-editor.org/rfc/rfc9230))
+target that resolves Handshake names, with a client, build and deployment files,
+and a service that publishes a list of usable relays.
 
-## Why
-
-Every Handshake user without a local node resolves names through someone
-else's DoH server — and a DoH server learns **both** who you are (your IP)
-and **what you look up** (every name you visit). For a naming system whose
-whole point is censorship-resistance, that is a bad trade to take silently.
-
-[Oblivious DoH](https://www.rfc-editor.org/rfc/rfc9230) splits the two:
+With ODoH, the client encrypts its query to the target and sends it through a
+relay run by someone else. The relay sees the client's IP but not the query;
+the target sees the query but not the IP. This only holds if the relay and the
+target are run by different operators.
 
 ```
-you ──(HPKE-encrypted query)──▶ RELAY ──▶ TARGET (odoh.hns.one) ──▶ hsd recursive
-        relay sees your IP,        target sees the query,
-        not your query             not your IP
+client --(HPKE-encrypted query)--> relay --> target (odoh.hns.one) --> resolver
 ```
 
-Unless the relay and the target collude, no single party can link you to
-your lookups. That is why **the relay must be run by someone other than the
-target's operator** — never pair an hns.one relay with the hns.one target.
-
-## The public target
+## Public target
 
 | | |
 |---|---|
@@ -30,87 +21,76 @@ target's operator** — never pair an hns.one relay with the hns.one target.
 | Config | `https://odoh.hns.one/.well-known/odohconfigs` |
 | Health | `https://odoh.hns.one/health` |
 | Suite | X25519-HKDF-SHA256 / HKDF-SHA256 / AES-128-GCM |
-| Upstream | Handshake-aware `hsd` recursive resolver (SPV) on the same host |
-| Logs | nginx `access_log off`; server telemetry stays local |
+| Upstream | hsd for Handshake names, a validating resolver for ICANN names |
 
-Use it from any RFC 9230 client through an independent relay, e.g. with
-[dnscrypt-proxy](https://github.com/DNSCrypt/dnscrypt-proxy) or the client
-in this repo. Known-working public relay today:
-`https://odoh-relay.numa.rs/relay`. (`odoh-relay.edgecompute.app` relays
-only to targets on the DNSCrypt public list — see roadmap.)
+Use it through an independent relay with any RFC 9230 client, such as
+[dnscrypt-proxy](https://github.com/DNSCrypt/dnscrypt-proxy) or the client in
+this repository. DNSCrypt maintains a
+[list of public ODoH relays](https://github.com/DNSCrypt/dnscrypt-resolvers/blob/master/v3/odoh-relays.md).
+hns.one runs no relay, and the target does not serve `/proxy`.
 
 ## Client (`client/`)
 
-A dependency-light ES-module RFC 9230 client (`@hpke/core` +
-`@hpke/dhkem-x25519`, WebCrypto for HKDF/AES-GCM). It is the same code the
-[HNS.ONE Browser](https://hns.one) ships (2.28+, where oblivious resolution
-is the default with automatic fallback to plain DoH).
+An ES-module RFC 9230 client using `@hpke/core` and `@hpke/dhkem-x25519`.
+`odoh.js` is the same module the [Wildroot](https://wildroot.io) browser uses.
 
 ```js
 import { OdohTransport } from './odoh.js'
+
 const t = new OdohTransport({
   target: 'odoh.hns.one',
   relays: ['https://odoh-relay.numa.rs/relay']
 })
-const { answer, via } = await t.query(dnsWireQuery) // Uint8Array in, out
+const { answer, via } = await t.query(dnsWireQuery) // Uint8Array in and out
 ```
 
-```
-cd client && npm install && npm run example
+```sh
+cd client
+npm install
+node --test odoh.test.js   # unit tests
+npm run example            # resolves the Handshake TLD 14898 directly and through each relay
 ```
 
-The example resolves `14898` (a Handshake TLD) directly and through each
-public relay, printing latency and answers.
-
-## Run your own target (`server/`, `deploy/`)
+## Running a target (`server/`, `deploy/`)
 
 The target is Cloudflare's [odoh-server-go](https://github.com/cloudflare/odoh-server-go)
-(MIT) plus one patch making the upstream nameservers env-configurable
-(`ODOH_NAMESERVERS`) so it can forward to a **Handshake-aware** recursive
-resolver — that is the entire trick that makes this a Handshake ODoH target.
+with one patch that makes the upstream nameservers configurable
+(`ODOH_NAMESERVERS`), so it can forward to a Handshake-aware resolver.
 
-```
-cd server && ./build.sh            # needs Go ≥1.22; static linux/amd64 binary
-scp hns-odoh root@host:/usr/local/bin/
-# then: deploy/hns-odoh.env.example -> /etc/hns-odoh.env  (seed! keep it)
-#       deploy/hns-odoh.service    -> /etc/systemd/system/
-#       deploy/nginx-odoh.conf     -> your nginx, TLS via your certs
+```sh
+cd server && ./build.sh    # needs git and Go; builds server/hns-odoh for linux/amd64
 ```
 
-Point `ODOH_NAMESERVERS` at an hsd recursive (`hsd --rs-host 127.0.0.1
---rs-port 5350` or equivalent). Without a Handshake-aware upstream this is
-just another ICANN ODoH target.
+Then copy `server/hns-odoh` to `/usr/local/bin/`, install
+`deploy/hns-odoh.env.example` as `/etc/hns-odoh.env` (keep the seed: the key
+pair is derived from it), `deploy/hns-odoh.service` as a systemd unit, and
+`deploy/nginx-odoh.conf` in nginx with your certificates.
 
-Run a **relay** instead (more valuable to the ecosystem the fewer exist):
-the same binary serves `/proxy`; put it on a host and organization that has
-nothing to do with any target its users query.
+Point `ODOH_NAMESERVERS` at a resolver that answers Handshake names, such as
+hsd's recursive resolver. hsd does not reject DNSSEC-bogus answers, so put a
+validating resolver in front of it for ICANN names before advertising DNSSEC.
+`list-service/hardening-check.py` tests this.
 
-## Honest limits
+The same binary also serves a relay at `/proxy`. The sample nginx config
+disables it, because a host that is both target and relay sees both halves.
 
-- ODoH protects **who-asked-what** at the resolver. It is not a VPN: the
-  page fetch that follows still comes from your IP (the browser's Tor/VPS
-  anonymization modes cover that), and it is **not chain proof** — a
-  malicious target can still lie about records. Chain-proof resolution
-  (local SPV + DANE) remains the gold standard; ODoH is for the fallback
-  window and for clients that cannot run a node.
-- RFC 9230 is experimental; the public relay pool is currently tiny (two).
-- Queries take one extra hop (~100–500 ms in practice).
+## List service (`list-service/`)
 
-## Roadmap
+Builds a JSON feed of ODoH targets and relays from DNSCrypt's signed lists,
+verifying the minisign signatures and excluding target and relay pairs run by
+the same operator. The hns.one feed is at
+`https://hns.one/.well-known/odoh-feed.json`. See
+[`list-service/DEPLOY.md`](list-service/DEPLOY.md).
 
-- [ ] Submit `odoh.hns.one` to the [DNSCrypt public ODoH server list](https://github.com/DNSCrypt/dnscrypt-resolvers)
-      (unlocks the `crypto.sx` relay and every dnscrypt-proxy user).
-- [ ] Second target region; independent Handshake relays.
-- [ ] ODoH in the HNS.ONE Android browser.
-- [ ] Oblivious resolution for ICANN names in the desktop browser — blocked
-      on Chromium accepting only `https` DoH templates (a plain-http
-      localhost ODoH bridge was probed and rejected); needs upstream ODoH
-      support or a trusted local certificate. Until then ICANN lookups ride
-      encrypted (non-oblivious) DoH to a pool that includes several public
-      ODoH operators.
+## Limits
+
+- ODoH hides who asked what from the resolver. It does not hide the client's
+  IP from the sites it then connects to, and it is not a chain proof: a
+  dishonest target can still return false records.
+- RFC 9230 is an experimental RFC, and there are few public relays.
+- Each query takes one extra hop.
 
 ## License
 
 MIT. `server/` builds on [cloudflare/odoh-server-go](https://github.com/cloudflare/odoh-server-go)
-(MIT, © Cloudflare & Apple). The client also ships inside the AGPL-3.0
-HNS.ONE Browser; this standalone copy is MIT so anything can embed it.
+(MIT).
